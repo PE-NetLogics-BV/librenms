@@ -54,32 +54,36 @@ if (isset($_POST['addbill']) && $_POST['addbill'] == 'yes') {
     }//end if
 
     $insert = [
-        'bill_name'   => $_POST['bill_name'],
-        'bill_type'   => $_POST['bill_type'],
-        'bill_cdr'    => $bill_cdr,
-        'bill_day'    => $_POST['bill_day'],
-        'bill_quota'  => $bill_quota,
+        'bill_name' => $_POST['bill_name'],
+        'bill_type' => $_POST['bill_type'],
+        'bill_cdr' => $bill_cdr,
+        'bill_day' => $_POST['bill_day'],
+        'bill_quota' => $bill_quota,
         'bill_custid' => $_POST['bill_custid'],
-        'bill_ref'    => $_POST['bill_ref'],
-        'bill_notes'  => $_POST['bill_notes'],
-        'rate_95th_in'      => 0,
-        'rate_95th_out'     => 0,
-        'rate_95th'         => 0,
-        'dir_95th'          => $_POST['dir_95th'],
-        'total_data'        => 0,
-        'total_data_in'     => 0,
-        'total_data_out'    => 0,
-        'rate_average'      => 0,
-        'rate_average_in'   => 0,
-        'rate_average_out'  => 0,
-        'bill_last_calc'    => ['NOW()'],
-        'bill_autoadded'    => 0,
+        'bill_ref' => $_POST['bill_ref'],
+        'bill_notes' => $_POST['bill_notes'],
+        'rate_95th_in' => 0,
+        'rate_95th_out' => 0,
+        'rate_95th' => 0,
+        'dir_95th' => $_POST['dir_95th'],
+        'total_data' => 0,
+        'total_data_in' => 0,
+        'total_data_out' => 0,
+        'rate_average' => 0,
+        'rate_average_in' => 0,
+        'rate_average_out' => 0,
+        'bill_last_calc' => ['NOW()'],
+        'bill_autoadded' => 0,
     ];
 
     $bill_id = dbInsert($insert, 'bills');
 
     if (is_numeric($bill_id) && is_numeric($_POST['port_id'])) {
         dbInsert(['bill_id' => $bill_id, 'port_id' => $_POST['port_id']], 'bill_ports');
+    }
+
+    if (is_numeric($bill_id) && ! empty($_POST['sap_id']) && is_numeric($_POST['sap_id'])) {
+        \App\Models\BillMplsSap::create(['bill_id' => $bill_id, 'sap_id' => (int) $_POST['sap_id']]);
     }
 
     header('Location: ' . \LibreNMS\Util\Url::generate(['page' => 'bill', 'bill_id' => $bill_id, 'view' => 'edit']));

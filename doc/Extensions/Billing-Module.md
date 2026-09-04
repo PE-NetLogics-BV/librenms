@@ -40,7 +40,8 @@ port. For those cases a bill can be based on individual SAPs: the bill then
 accounts the ingress/egress octets of each selected SAP, using the same
 `TIMETRA-SAP-MIB::sapBaseStatsTable` counters as the SAP traffic graphs.
 
-To add a SAP to a bill, open the bill, select `Edit` and use the `Add SAP`
+A SAP can be selected in the `Add Traffic Bill` dialog when creating a bill,
+or added later by opening the bill, selecting `Edit` and using the `Add SAP`
 form. SAPs and ports can be mixed on the same bill; their usage is summed.
 The MPLS discovery/poller module must be enabled on the device for SAPs to
 be known.
