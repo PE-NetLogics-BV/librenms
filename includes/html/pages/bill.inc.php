@@ -74,6 +74,8 @@ if (Gate::allows('view', $bill)) {
         [$bill_id]
     );
 
+    $bill_saps = $bill->mplsSaps()->with('device')->get();
+
     $vars['view'] ??= 'quick';
 
     function print_port_list($ports)
@@ -95,7 +97,26 @@ if (Gate::allows('view', $bill)) {
         }
 
         echo '</div></div>';
-    }//end print_port_list?>
+    }//end print_port_list
+
+    function print_sap_list($saps)
+    {
+        echo '<div class="panel panel-default">
+            <div class="panel-heading">
+                <h3 class="panel-title">Billed SAPs</h3>
+            </div>
+            <div class="list-group">';
+
+        foreach ($saps as $sap) {
+            $descr = (empty($sap->sapDescription) ? '' : ' - ' . htmlentities($sap->sapDescription));
+
+            echo '<div class="list-group-item">';
+            echo 'SAP ' . htmlentities($sap->ifName . ':' . $sap->encap_display) . ' (service ' . $sap->svc_oid . ')' . $descr . ' on ' . Url::deviceLink($sap->device);
+            echo '</div>';
+        }
+
+        echo '</div></div>';
+    }//end print_sap_list?>
 
     <h2>Bill: <?php echo htmlentities((string) $bill_data['bill_name']); ?></h2>
 
@@ -161,7 +182,11 @@ if (Gate::allows('view', $bill)) {
 
 <div class="row">
 <div class="col-lg-6 col-lg-push-6">
-        <?php print_port_list($ports) ?>
+        <?php
+        print_port_list($ports);
+        if ($bill_saps->isNotEmpty()) {
+            print_sap_list($bill_saps);
+        } ?>
 </div>
 <div class="col-lg-6 col-lg-pull-6">
 <div class="panel panel-default">

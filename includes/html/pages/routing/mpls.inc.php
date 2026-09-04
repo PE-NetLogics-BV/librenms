@@ -1,5 +1,6 @@
 <?php
 
+use LibreNMS\OS\Timos;
 use LibreNMS\Util\Number;
 
 print_optionbar_start();
@@ -341,7 +342,7 @@ sapDown: The SAP associated with the service is down.">Oper State</a></th>
         echo "<tr bgcolor=$bg_colour>
             <td>" . generate_device_link($device, 0, ['tab' => 'routing', 'proto' => 'mpls', 'view' => 'sdpbinds']) . '</td>
             <td>' . e($sdpbind['svcId']) . '</td>
-            <td>' . e($sdpbind['sdp_oid']) . ':' . e($sdpbind['svc_oid']) . '</td>
+            <td>' . generate_sdpbind_url($sdpbind, e($sdpbind['sdp_oid'] . ':' . $sdpbind['svc_oid'])) . '</td>
             <td>' . e($sdpbind['sdpBindType']) . '</td>
             <td>' . e($sdpbind['sdpBindVcType']) . '</td>
             <td><span class="label label-' . $adminstate_status_color . '">' . e($sdpbind['sdpBindAdminStatus']) . '</td>
@@ -480,9 +481,9 @@ if ($vars['view'] == 'saps') {
 
         echo "<tr bgcolor=$bg_colour>
             <td>" . generate_device_link($device, 0, ['tab' => 'routing', 'proto' => 'mpls', 'view' => 'saps']) . '</td>
-            <td>' . generate_sap_url($sap, e($sap['svc_oid'])) . '</td>
+            <td>' . e($sap['svc_oid']) . '</td>
             <td>' . generate_port_link($port) . '</td>
-            <td>' . e($sap['sapEncapValue']) . '</td>
+            <td>' . generate_sap_url($sap, e(Timos::decodeEncapVal((int) $sap['sapEncapValue']))) . '</td>
             <td>' . e($sap['sapType']) . '</td>
             <td>' . e($sap['sapDescription']) . '</td>
             <td><span class="label label-' . $adminstate_status_color . '">' . e($sap['sapAdminStatus']) . '</td>

@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\MplsSap;
 use LibreNMS\Billing;
 use LibreNMS\Util\Number;
 
@@ -19,6 +20,25 @@ foreach ($ports as $port) {
     if (Rrd::checkRrdExists($rrd_file)) {
         $rrd_list[$i]['filename'] = $rrd_file;
         $rrd_list[$i]['descr'] = $port['ifDescr'];
+        $i++;
+    }
+}
+
+// billed SAPs are graphed via their existing sap rrds; those store bits
+// (not octets), so they carry their own dataset names and multiplier
+$bill_saps = MplsSap::whereHas('bills', fn ($q) => $q->where('bills.bill_id', $bill_id))
+    ->with('device')
+    ->get();
+
+foreach ($bill_saps as $sap) {
+    $encap = $sap->sapEncapValue == '*' ? '4095' : $sap->sapEncapValue;
+    $rrd_file = Rrd::name($sap->device->hostname, \LibreNMS\Data\Store\Rrd::safeName('sap-' . $sap->svc_oid . '.' . $sap->sapPortId . '.' . $encap));
+    if (Rrd::checkRrdExists($rrd_file)) {
+        $rrd_list[$i]['filename'] = $rrd_file;
+        $rrd_list[$i]['descr'] = $sap->ifName . ':' . $sap->encap_display . ' Svc ' . $sap->svc_oid;
+        $rrd_list[$i]['ds_in'] = 'sapIngressBits';
+        $rrd_list[$i]['ds_out'] = 'sapEgressBits';
+        $rrd_list[$i]['multiplier'] = 1;
         $i++;
     }
 }

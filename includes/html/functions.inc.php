@@ -232,6 +232,11 @@ function generate_sap_url($sap, $vars = [])
     return Url::graphPopup(['device' => $sap['device_id'], 'page' => 'graphs', 'type' => 'device_sap', 'tab' => 'routing', 'proto' => 'mpls', 'view' => 'saps', 'traffic_id' => $sap['svc_oid'] . '.' . $sap['sapPortId'] . '.' . $sap['sapEncapValue']], $vars);
 }//end generate_sap_url()
 
+function generate_sdpbind_url($sdpbind, $content = null)
+{
+    return Url::graphPopup(['device' => $sdpbind['device_id'], 'page' => 'graphs', 'type' => 'device_sdpbind', 'tab' => 'routing', 'proto' => 'mpls', 'view' => 'sdpbinds', 'traffic_id' => $sdpbind['sdp_oid'] . '.' . $sdpbind['svc_oid']], $content);
+}//end generate_sdpbind_url()
+
 /**
  * Create image to output text instead of a graph.
  *

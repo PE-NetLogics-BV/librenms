@@ -6,6 +6,8 @@ $confirm = $_POST['confirm'] ?? 'none';
 if ($action == 'delete_bill' && $confirm == 'confirm') {
     \App\Models\BillHistory::where('bill_id', $bill_id)->delete();
     \App\Models\BillPort::where('bill_id', $bill_id)->delete();
+    \App\Models\BillMplsSap::where('bill_id', $bill_id)->delete();
+    \App\Models\BillSapCounter::where('bill_id', $bill_id)->delete();
     \App\Models\BillData::where('bill_id', $bill_id)->delete();
     \App\Models\BillPerm::where('bill_id', $bill_id)->delete();
     \App\Models\Bill::where('bill_id', $bill_id)->delete();
@@ -36,6 +38,15 @@ if ($action == 'add_bill_port') {
 
 if ($action == 'delete_bill_port') {
     \App\Models\BillPort::where('bill_id', $bill_id)->where('port_id', $_POST['port_id'])->delete();
+}
+
+if ($action == 'add_bill_sap' && is_numeric($_POST['sap_id'])) {
+    \App\Models\BillMplsSap::firstOrCreate(['bill_id' => $bill_id, 'sap_id' => $_POST['sap_id']]);
+}
+
+if ($action == 'delete_bill_sap') {
+    \App\Models\BillMplsSap::where('bill_id', $bill_id)->where('sap_id', $_POST['sap_id'])->delete();
+    \App\Models\BillSapCounter::where('bill_id', $bill_id)->where('sap_id', $_POST['sap_id'])->delete();
 }
 
 if ($action == 'update_bill') {

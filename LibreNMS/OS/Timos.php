@@ -136,6 +136,26 @@ class Timos extends OS implements MplsDiscovery, MplsPolling, TransceiverDiscove
     }
 
     /**
+     * Decode a raw TmnxEncapVal into a human readable outer.inner tag string
+     *
+     * @see TIMETRA-TC-MIB::TmnxEncapVal
+     */
+    public static function decodeEncapVal(int $tmnxEncapVal): string
+    {
+        if ($tmnxEncapVal === 0) {
+            return '0';
+        }
+
+        $outer = $tmnxEncapVal & 0xFFF;
+        $inner = ($tmnxEncapVal >> 16) & 0xFFF;
+
+        $outerStr = ($outer === 0xFFF) ? '*' : (string) $outer;
+        $innerStr = ($inner === 0xFFF) ? '*' : (string) $inner;
+
+        return $outerStr . '.' . $innerStr;
+    }
+
+    /**
      * @param  mixed  $tmnxEncapVal
      * @return string encapsulation
      *
@@ -677,6 +697,30 @@ class Timos extends OS implements MplsDiscovery, MplsPolling, TransceiverDiscove
             $svc_id = $svc?->svc_id;
 
             if ($sdp_id && $svc_id && $sdp_oid && $svc_oid) {
+                if (isset($value['sdpBindBaseStatsIngFwdOctets']) || isset($value['sdpBindBaseStatsEgressForwardedOctets'])) {
+                    //create SDP bind graphs, stored in octets with the same datasets as port rrds so
+                    //they can be aggregated together with ports (e.g. in bill graphs)
+                    $traffic_id = $sdp_oid . '.' . $svc_oid;
+                    $rrd_name = \LibreNMS\Data\Store\Rrd::safeName('sdpbind-' . $traffic_id);
+                    $rrd_def = RrdDefinition::make()
+                        ->addDataset('INOCTETS', 'COUNTER', 0)
+                        ->addDataset('OUTOCTETS', 'COUNTER', 0);
+
+                    $fields = [
+                        'INOCTETS' => $value['sdpBindBaseStatsIngFwdOctets'] ?? 0,
+                        'OUTOCTETS' => $value['sdpBindBaseStatsEgressForwardedOctets'] ?? 0,
+                    ];
+
+                    $tags = [
+                        'traffic_id' => $traffic_id,
+                        'rrd_name' => $rrd_name,
+                        'rrd_def' => $rrd_def,
+                    ];
+
+                    app('Datastore')->put($this->getDeviceArray(), 'sdpbind', $tags, $fields);
+                    $this->enableGraph('sdpbind');
+                }
+
                 return new MplsSdpBind([
                     'sdp_id' => $sdp_id,
                     'svc_id' => $svc_id,
