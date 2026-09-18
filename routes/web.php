@@ -381,6 +381,7 @@ Route::middleware(['auth'])->group(function (): void {
             Route::get('inventory', Select\InventoryController::class)->name('ajax.select.inventory');
             Route::get('syslog', Select\SyslogController::class)->name('ajax.select.syslog');
             Route::get('location', Select\LocationController::class)->name('ajax.select.location');
+            Route::get('mpls-sap', Select\MplsSapController::class)->name('ajax.select.mpls-sap');
             Route::get('munin', Select\MuninPluginController::class)->name('ajax.select.munin');
             Route::get('os', Select\OsController::class)->name('ajax.select.os');
             Route::get('role', Select\RoleController::class)->name('ajax.select.role');

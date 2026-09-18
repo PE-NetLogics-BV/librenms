@@ -30,6 +30,22 @@ select `+ Create Bill`.
 
 Enter the details in the form. Select at least one device and one port.
 
+## Billing Nokia SAPs
+
+On Nokia SR OS (TiMOS) devices, the customer handoff of a service is a SAP
+(Service Access Point: port + encapsulation). Where most vendors model such a
+handoff as a sub-interface that can be billed as a port, a Nokia SAP does not
+appear as an interface in the ifTable and therefore cannot be billed as a
+port. For those cases a bill can be based on individual SAPs: the bill then
+accounts the ingress/egress octets of each selected SAP, using the same
+`TIMETRA-SAP-MIB::sapBaseStatsTable` counters as the SAP traffic graphs.
+
+A SAP can be selected in the `Add Traffic Bill` dialog when creating a bill,
+or added later by opening the bill, selecting `Edit` and using the `Add SAP`
+form. SAPs and ports can be mixed on the same bill; their usage is summed.
+The MPLS discovery/poller module must be enabled on the device for SAPs to
+be known.
+
 ## 95th Percentile Calculation
 
 For 95th percentile billing, LibreNMS uses the higher of the input

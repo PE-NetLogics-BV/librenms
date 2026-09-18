@@ -120,6 +120,63 @@ foreach ($query->get(['bill_id', 'bill_name']) as $bill) {
         $out_delta = ($out_delta + $port_data['out_delta']);
     }//end foreach
 
+    if (LibrenmsConfig::get('distributed_poller') && LibrenmsConfig::get('distributed_billing')) {
+        $sap_list = dbFetchRows('SELECT * FROM `bill_mpls_saps` as B, `mpls_saps` as S, `devices` as D WHERE B.bill_id=? AND S.sap_id = B.sap_id AND S.sapOperStatus="up" AND D.device_id = S.device_id AND D.status=1 AND D.poller_group IN (' . LibrenmsConfig::get('distributed_poller_group') . ')', [$bill_id]);
+    } else {
+        $sap_list = dbFetchRows('SELECT * FROM `bill_mpls_saps` as B, `mpls_saps` as S, `devices` as D WHERE B.bill_id=? AND S.sap_id = B.sap_id AND S.sapOperStatus="up" AND D.device_id = S.device_id AND D.status=1', [$bill_id]);
+    }
+
+    foreach ($sap_list as $sap_data) {
+        $sap_id = $sap_data['sap_id'];
+
+        Log::info("  Polling SAP {$sap_data['ifName']}:{$sap_data['sapEncapValue']} (service {$sap_data['svc_oid']}) on {$sap_data['hostname']}");
+
+        $sap_device = DeviceCache::get((int) $sap_data['device_id']);
+        $sap_data['in_measurement'] = Billing::getSapValue($sap_device, $sap_data['svc_oid'], $sap_data['sapPortId'], $sap_data['sapEncapValue'], 'In');
+        $sap_data['out_measurement'] = Billing::getSapValue($sap_device, $sap_data['svc_oid'], $sap_data['sapPortId'], $sap_data['sapEncapValue'], 'Out');
+
+        $last_counters = Billing::getLastSapCounter($sap_id, $bill_id);
+        if ($last_counters['state'] == 'ok') {
+            $sap_data['last_in_delta'] = $last_counters['in_delta'];
+            $sap_data['last_out_delta'] = $last_counters['out_delta'];
+
+            // no bandwidth sanity ceiling for a SAP (unlike ifSpeed on ports), only guard against counter wrap
+            if ($sap_data['in_measurement'] >= $last_counters['in_counter']) {
+                $sap_data['in_delta'] = ($sap_data['in_measurement'] - $last_counters['in_counter']);
+            } else {
+                $sap_data['in_delta'] = $sap_data['last_in_delta'];
+            }
+
+            if ($sap_data['out_measurement'] >= $last_counters['out_counter']) {
+                $sap_data['out_delta'] = ($sap_data['out_measurement'] - $last_counters['out_counter']);
+            } else {
+                $sap_data['out_delta'] = $sap_data['last_out_delta'];
+            }
+        } else {
+            $sap_data['in_delta'] = '0';
+            $sap_data['out_delta'] = '0';
+        }
+
+        Log::debug('in_measurement: ' . $sap_data['in_measurement'] . '  out_measurement: ' . $sap_data['out_measurement']);
+        Log::debug('IN_delta: ' . $sap_data['in_delta'] . ' OUT_delta: ' . $sap_data['out_delta']);
+
+        if (is_numeric($sap_data['in_measurement']) && is_numeric($sap_data['out_measurement'])) {
+            // NOTE: casting to string for mysqli bug (fixed by mysqlnd)
+            $fields = ['timestamp' => $now, 'in_counter' => (string) set_numeric($sap_data['in_measurement']), 'out_counter' => (string) set_numeric($sap_data['out_measurement']), 'in_delta' => (string) set_numeric($sap_data['in_delta']), 'out_delta' => (string) set_numeric($sap_data['out_delta'])];
+            if (dbUpdate($fields, 'bill_sap_counters', "`sap_id`='" . $sap_id . "' AND `bill_id`='$bill_id'") == 0) {
+                $fields['bill_id'] = $bill_id;
+                $fields['sap_id'] = $sap_id;
+                dbInsert($fields, 'bill_sap_counters');
+            }
+        } else {
+            Log::error("WATCH out! - Wrong counters. Table 'bill_sap_counters' not updated");
+        }
+
+        $delta = ($delta + $sap_data['in_delta'] + $sap_data['out_delta']);
+        $in_delta = ($in_delta + $sap_data['in_delta']);
+        $out_delta = ($out_delta + $sap_data['out_delta']);
+    }//end foreach
+
     $last_data = Billing::getLastMeasurement($bill_id);
 
     if ($last_data['state'] == 'ok') {
@@ -147,11 +204,13 @@ foreach ($query->get(['bill_id', 'bill_name']) as $bill) {
         // NOTE: casting to string for mysqli bug (fixed by mysqlnd)
         if (LibrenmsConfig::get('distributed_poller') && LibrenmsConfig::get('distributed_billing')) {
             $port_count = dbFetchCell('SELECT COUNT(*) FROM `bill_ports` as P, `ports` as I, `devices` as D WHERE P.bill_id=? AND I.port_id = P.port_id AND D.device_id = I.device_id AND D.poller_group IN (' . LibrenmsConfig::get('distributed_poller_group') . ')', [$bill_id]);
+            $sap_count = dbFetchCell('SELECT COUNT(*) FROM `bill_mpls_saps` as B, `mpls_saps` as S, `devices` as D WHERE B.bill_id=? AND S.sap_id = B.sap_id AND D.device_id = S.device_id AND D.poller_group IN (' . LibrenmsConfig::get('distributed_poller_group') . ')', [$bill_id]);
         } else {
             $port_count = dbFetchCell('SELECT COUNT(*) FROM `bill_ports` as P, `ports` as I, `devices` as D WHERE P.bill_id=? AND I.port_id = P.port_id AND D.device_id = I.device_id', [$bill_id]);
+            $sap_count = dbFetchCell('SELECT COUNT(*) FROM `bill_mpls_saps` as B, `mpls_saps` as S, `devices` as D WHERE B.bill_id=? AND S.sap_id = B.sap_id AND D.device_id = S.device_id', [$bill_id]);
         }
-        if ($port_count > 0) {
-            // If no ports are part of this bill then don't insert a zero value entry
+        if ($port_count > 0 || $sap_count > 0) {
+            // If no ports or SAPs are part of this bill then don't insert a zero value entry
             dbInsert(['bill_id' => $bill_id, 'timestamp' => $now, 'period' => $period, 'delta' => (string) $delta, 'in_delta' => (string) $in_delta, 'out_delta' => (string) $out_delta], 'bill_data');
         }
     }

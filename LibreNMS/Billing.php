@@ -3,10 +3,13 @@
 namespace LibreNMS;
 
 use App\Facades\LibrenmsConfig;
+use App\Models\BillSapCounter;
+use App\Models\Device;
 use DateTime;
 use DateTimeZone;
 use Illuminate\Support\Str;
 use LibreNMS\Util\Number;
+use SnmpQuery;
 
 class Billing
 {
@@ -93,6 +96,52 @@ class Billing
         }
 
         return (int) $value;
+    }
+
+    /**
+     * Get the octets of a single Nokia SAP.
+     * Uses the same TIMETRA-SAP-MIB::sapBaseStatsTable counters as the SAP traffic graphs:
+     * In = ingress Pchip offered high (.4) + low (.6) priority octets
+     * Out = egress Qchip forwarded in-profile (.20) + out-profile (.22) octets
+     * The table is indexed by svcId.sapPortId.sapEncapValue; sapEncapValue is the value
+     * stored in mpls_saps ('*' is the discovery representation of encap 4095).
+     * Returns null unless both counters returned a numeric value — a partial sum would
+     * be recorded as a counter decrease or a bogus low seed value.
+     */
+    public static function getSapValue(Device $device, $svc_oid, $sapPortId, $sapEncapValue, $inout): ?int
+    {
+        $encap = $sapEncapValue == '*' ? 4095 : $sapEncapValue;
+        $objects = $inout == 'In' ? [4, 6] : [20, 22];
+
+        $total = null;
+        foreach ($objects as $object) {
+            $oid = '.1.3.6.1.4.1.6527.3.1.2.4.3.6.1.' . $object . '.' . $svc_oid . '.' . $sapPortId . '.' . $encap;
+            $value = SnmpQuery::device($device)->numeric()->get($oid)->value();
+            if (! is_numeric($value)) {
+                return null;
+            }
+            $total = ($total ?? 0) + (int) $value;
+        }
+
+        return $total;
+    }
+
+    public static function getLastSapCounter($sap_id, $bill_id): array
+    {
+        $return = [];
+        $row = BillSapCounter::where('sap_id', $sap_id)->where('bill_id', $bill_id)->first();
+        if ($row !== null) {
+            $return['timestamp'] = $row->timestamp;
+            $return['in_counter'] = $row->in_counter;
+            $return['in_delta'] = $row->in_delta;
+            $return['out_counter'] = $row->out_counter;
+            $return['out_delta'] = $row->out_delta;
+            $return['state'] = 'ok';
+        } else {
+            $return['state'] = 'failed';
+        }
+
+        return $return;
     }
 
     public static function getLastPortCounter($port_id, $bill_id): array
