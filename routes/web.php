@@ -141,6 +141,8 @@ Route::middleware(['auth'])->group(function (): void {
     Route::post('bill/{bill}/reset', [BillController::class, 'reset'])->name('bill.reset');
     Route::post('bill/{bill}/ports', [BillController::class, 'attachPort'])->name('bill.port.attach');
     Route::delete('bill/{bill}/ports/{port}', [BillController::class, 'detachPort'])->name('bill.port.detach');
+    Route::get('bill/{bill}/{vars?}', [BillController::class, 'show'])->name('bill.show')->whereNumber('bill')->where('vars', '.*');
+    Route::get('bill/bill_id={bill}/{vars?}', [BillController::class, 'show'])->whereNumber('bill')->where('vars', '.*'); // legacy link format
     Route::get('locations', [LocationController::class, 'index']);
     Route::resource('ssl-certificates', SslCertificateController::class)->except(['edit']);
     Route::resource('preferences', UserPreferencesController::class)->only('index', 'store', 'update');

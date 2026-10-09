@@ -7,11 +7,15 @@ use App\Http\Requests\StoreBillRequest;
 use App\Http\Requests\UpdateBillRequest;
 use App\Models\Bill;
 use App\Models\Port;
+use Illuminate\Support\Carbon;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
+use LibreNMS\Billing;
+use LibreNMS\Util\Color;
+use LibreNMS\Util\Html;
 use LibreNMS\Util\Number;
 use LibreNMS\Util\Url;
 
@@ -36,6 +40,210 @@ class BillController extends Controller
             'open_create' => ($vars['view'] ?? null) === 'add' && $request->user()->can('create', Bill::class),
             'port' => $port,
         ]);
+    }
+
+    public function show(Request $request, Bill $bill): View
+    {
+        $this->authorize('view', $bill);
+
+        // legacy links: bill/bill_id=1/view=history/detail=all and bill/1?view=edit
+        $vars = Url::parseLegacyPathVars();
+        $view = $vars['view'] ?? 'quick';
+        $options = $this->viewOptions($request, $bill);
+        abort_unless(isset($options[$view]), in_array($view, ['edit', 'delete', 'reset']) ? 403 : 404);
+
+        [$from, $to] = Billing::getDates($bill->bill_day);
+        $data = [
+            'bill' => $bill,
+            'view' => $view,
+            'template' => in_array($view, ['quick', 'accurate']) ? 'graphs' : $view,
+            'options' => $options,
+            'ports' => $bill->ports()->with('device')->orderBy('ports.device_id')->get(),
+            'period' => [
+                'from' => Carbon::parse($from)->format(LibrenmsConfig::get('dateformat.date', 'Y-m-d')),
+                'to' => Carbon::parse($to)->format(LibrenmsConfig::get('dateformat.date', 'Y-m-d')),
+            ],
+        ];
+
+        return view('bills.show', $data + match ($view) {
+            'quick', 'accurate' => $this->usageData($bill, $view, $vars, $from, $to),
+            'transfer' => $this->transferData($bill, $from, $to),
+            'history' => $this->historyData($bill, $vars),
+            default => [],
+        });
+    }
+
+    /**
+     * @return array<string, array{text: string, link: string}>
+     */
+    private function viewOptions(Request $request, Bill $bill): array
+    {
+        $views = [
+            'quick' => __('Quick Graphs'),
+            'accurate' => __('Accurate Graphs'),
+            'transfer' => __('Transfer Graphs'),
+            'history' => __('Historical Graphs'),
+        ];
+        if ($request->user()->can('update', $bill)) {
+            $views['edit'] = __('Edit');
+        }
+        if ($request->user()->can('delete', $bill)) {
+            $views['delete'] = __('Delete');
+        }
+        if ($request->user()->can('update', $bill)) {
+            $views['reset'] = __('Reset');
+        }
+
+        $options = [];
+        foreach ($views as $key => $text) {
+            $options[$key] = ['text' => $text, 'link' => route('bill.show', ['bill' => $bill, 'view' => $key])];
+        }
+
+        return $options;
+    }
+
+    /**
+     * Summary and graphs of the current period (quick: bill_bits, accurate: bill_historicbits)
+     *
+     * @param  array<string, mixed>  $vars
+     * @return array<string, mixed>
+     */
+    private function usageData(Bill $bill, string $view, array $vars, string $from, string $to): array
+    {
+        $graph = ['id' => $bill->bill_id, 'width' => 1190, 'height' => 250] + ($bill->bill_type === 'quota' ? ['ave' => 'yes'] : ['95th' => 'yes']);
+        if ($view === 'accurate') {
+            $graph += ['type' => 'bill_historicbits', 'bill_code' => (string) ($vars['bill_code'] ?? '')];
+        } else {
+            $graph = ['type' => 'bill_bits', 'total' => 1, 'dir' => $bill->dir_95th, 'width' => 1000, 'height' => 200] + $graph;
+        }
+
+        $now = now();
+        $graphs = [
+            __('Billing View') => $graph + ['from' => strtotime($from), 'to' => strtotime($to)],
+            __('24 Hour View') => $graph + ['from' => $now->copy()->subDay()->getTimestamp(), 'to' => $now->getTimestamp()],
+            __('Monthly View') => $graph + ['from' => $now->copy()->subMonth()->getTimestamp(), 'to' => $now->getTimestamp()],
+        ];
+
+        if ($bill->bill_type === 'quota') {
+            $percent = Number::calculatePercent($bill->total_data, $bill->bill_quota);
+            $summary = [
+                'title' => __('Quota Bill'),
+                'used' => Billing::formatBytes($bill->total_data),
+                'allowed' => Billing::formatBytes($bill->bill_quota),
+                'detail' => __('Average rate') . ' ' . Number::formatSi($bill->rate_average, 2, 0, 'bps'),
+                'predicted' => Billing::formatBytes(Billing::getPredictedUsage($bill->bill_day, $bill->total_data)),
+            ];
+        } else {
+            $percent = Number::calculatePercent($bill->rate_95th, $bill->bill_cdr);
+            $summary = [
+                'title' => __('CDR / 95th Bill'),
+                'used' => Number::formatSi($bill->rate_95th, 2, 0, '') . 'bps',
+                'allowed' => Number::formatSi($bill->bill_cdr, 2, 0, '') . 'bps',
+                'detail' => '(95th%ile)',
+                'predicted' => Number::formatSi(Billing::getPredictedUsage($bill->bill_day, $bill->rate_95th), 2, 0, '') . 'bps',
+            ];
+        }
+        $summary['percent'] = $percent;
+        $summary['bar'] = Html::percentageBar(200, 10, $percent, right_text: $percent . '%');
+
+        return ['summary' => $summary, 'graphs' => $graphs];
+    }
+
+    /**
+     * Transferred data so far, averaged and extrapolated to the end of the period
+     *
+     * @return array<string, mixed>
+     */
+    private function transferData(Bill $bill, string $from, string $to): array
+    {
+        $elapsed_days = max(1, (int) ceil((time() - strtotime($from)) / 86400));
+        $total_days = max(1, (int) round((strtotime($to) - strtotime($from)) / 86400));
+        $allowed = $bill->bill_type === 'quota' ? Billing::formatBytes($bill->bill_quota) : '-';
+
+        $row = function (string $name, int $bytes, float $percent) use ($elapsed_days, $total_days, $allowed): array {
+            $colors = Color::percentage($percent, null);
+
+            return [
+                'name' => $name,
+                'data' => Billing::formatBytes($bytes),
+                'allowed' => $allowed,
+                'average' => Billing::formatBytes($bytes / $elapsed_days),
+                'estimated' => Billing::formatBytes($bytes / $elapsed_days * $total_days),
+                'bar' => Html::percentageBar(200, 10, $percent, null, $percent . '%', null, null, ['left' => $colors['left'], 'left_text' => null, 'right' => $colors['right'], 'right_text' => null]),
+                'color' => $colors['left'],
+            ];
+        };
+
+        $estimated_total = $bill->total_data / $elapsed_days * $total_days;
+        $rows = [
+            $row(__('Transferred'), (int) $bill->total_data, $bill->bill_type === 'quota' ? Number::calculatePercent($bill->total_data, $bill->bill_quota) : Number::calculatePercent($bill->total_data, $estimated_total)),
+            $row(__('Inbound'), (int) $bill->total_data_in, Number::calculatePercent($bill->total_data_in, $bill->total_data)),
+            $row(__('Outbound'), (int) $bill->total_data_out, Number::calculatePercent($bill->total_data_out, $bill->total_data)),
+        ];
+        $overuse = $bill->total_data - $bill->bill_quota;
+        if ($bill->bill_type === 'quota' && $overuse > 0) {
+            $rows[] = ['overuse' => true] + $row(__('Already overusage'), (int) $overuse, max(0, Number::calculatePercent($bill->total_data, $bill->bill_quota) - 100));
+        }
+
+        $graph = ['type' => 'bill_historictransfer', 'id' => $bill->bill_id, 'width' => 1190, 'height' => 250];
+        $now = now();
+        $graphs = [
+            __('Billing Period View') => $graph + ['from' => strtotime($from), 'to' => strtotime($to), 'imgtype' => 'day'],
+            __('Rolling 24 Hour View') => $graph + ['from' => $now->copy()->subDay()->getTimestamp(), 'to' => $now->getTimestamp(), 'imgtype' => 'hour'],
+            __('Rolling Monthly View') => $graph + ['from' => $now->copy()->subMonth()->getTimestamp(), 'to' => $now->getTimestamp(), 'imgtype' => 'day'],
+        ];
+
+        return ['transfer' => $rows, 'graphs' => $graphs];
+    }
+
+    /**
+     * The last 24 closed billing periods, with detail graphs for the requested one(s)
+     *
+     * @param  array<string, mixed>  $vars
+     * @return array<string, mixed>
+     */
+    private function historyData(Bill $bill, array $vars): array
+    {
+        $base = (int) LibrenmsConfig::get('billing.base', 1000);
+        $detail = $vars['detail'] ?? null;
+        $graph = ['id' => $bill->bill_id, 'width' => 1190, 'height' => 250];
+
+        $history = $bill->history()->orderByDesc('bill_datefrom')->limit(24)->get()->map(function ($entry) use ($bill, $base, $detail, $graph) {
+            $cdr = strtolower((string) $entry->bill_type) === 'cdr';
+            $colors = Color::percentage($entry->bill_percent, null);
+            $format = $cdr
+                ? fn ($value) => Number::formatSi($value, 2, 0, 'bps')
+                : fn ($value) => Number::formatBase($value, $base, 2, 0, '');
+            $show_detail = $detail === 'all' || (string) $detail === (string) $entry->bill_hist_id;
+
+            return [
+                'id' => $entry->bill_hist_id,
+                'period' => date('Y-m-d', strtotime((string) $entry->bill_datefrom)) . ' to ' . date('Y-m-d', strtotime((string) $entry->bill_dateto)),
+                'type' => $cdr ? 'CDR' : 'Quota',
+                'allowed' => $format($entry->bill_allowed),
+                'in' => $format($cdr ? $entry->rate_95th_in : $entry->traf_in),
+                'out' => $format($cdr ? $entry->rate_95th_out : $entry->traf_out),
+                'peak_out' => Number::formatBase($entry->bill_peak_out, $base, 2, 0, ''),
+                'peak_in' => Number::formatBase($entry->bill_peak_in, $base, 2, 0, ''),
+                'total' => Number::formatBase($entry->traf_total, $base, 2, 0, ''),
+                'rate_95th' => Number::formatSi($entry->rate_95th, 2, 0, 'bps'),
+                'overuse' => $entry->bill_overuse <= 0 ? null : ($cdr ? $format($entry->bill_overuse) : Number::formatBase($entry->bill_overuse, $base)),
+                'color' => $colors['left'],
+                'bar' => Html::percentageBar(250, 10, $entry->bill_percent, null, $entry->bill_percent . '%', null, null, ['left' => $colors['left'], 'left_text' => null, 'right' => $colors['right'], 'right_text' => null]),
+                'detail_link' => route('bill.show', ['bill' => $bill, 'view' => 'history', 'detail' => $entry->bill_hist_id]),
+                'detail_graphs' => $show_detail ? [
+                    route('graph', $graph + ['type' => 'bill_historicbits', 'bill_hist_id' => $entry->bill_hist_id]),
+                    route('graph', $graph + ['type' => 'bill_historictransfer', 'imgtype' => 'day', 'bill_hist_id' => $entry->bill_hist_id]),
+                    route('graph', $graph + ['type' => 'bill_historictransfer', 'imgtype' => 'hour', 'bill_hist_id' => $entry->bill_hist_id]),
+                ] : [],
+            ];
+        });
+
+        return [
+            'history' => $history,
+            'monthly_graph' => route('graph', $graph + ['type' => 'bill_historicmonthly']),
+            'all_details_link' => route('bill.show', ['bill' => $bill, 'view' => 'history', 'detail' => 'all']),
+        ];
     }
 
     public function store(StoreBillRequest $request): RedirectResponse|JsonResponse
@@ -73,7 +281,7 @@ class BillController extends Controller
             return response()->json(['status' => 'ok', 'message' => __('Bill Created'), 'bill_id' => $bill->bill_id]);
         }
 
-        return redirect()->to(Url::generate(['page' => 'bill', 'bill_id' => $bill->bill_id, 'view' => 'edit']));
+        return redirect()->route('bill.show', ['bill' => $bill, 'view' => 'edit']);
     }
 
     public function update(UpdateBillRequest $request, Bill $bill): RedirectResponse|JsonResponse
@@ -99,7 +307,7 @@ class BillController extends Controller
             return response()->json(['status' => 'ok', 'message' => __('Bill Properties Updated')]);
         }
 
-        return redirect()->to(Url::generate(['page' => 'bill', 'bill_id' => $bill->bill_id, 'view' => 'edit']));
+        return redirect()->route('bill.show', ['bill' => $bill, 'view' => 'edit']);
     }
 
     public function destroy(Request $request, Bill $bill): RedirectResponse|JsonResponse
@@ -178,7 +386,7 @@ class BillController extends Controller
             return response()->json(['status' => 'ok', 'message' => __('Port added to bill')]);
         }
 
-        return redirect()->to(Url::generate(['page' => 'bill', 'bill_id' => $bill->bill_id, 'view' => 'edit']));
+        return redirect()->route('bill.show', ['bill' => $bill, 'view' => 'edit']);
     }
 
     public function detachPort(Request $request, Bill $bill, Port $port): RedirectResponse|JsonResponse
@@ -193,6 +401,6 @@ class BillController extends Controller
             return response()->json(['status' => 'ok', 'message' => __('Port removed from bill')]);
         }
 
-        return redirect()->to(Url::generate(['page' => 'bill', 'bill_id' => $bill->bill_id, 'view' => 'edit']));
+        return redirect()->route('bill.show', ['bill' => $bill, 'view' => 'edit']);
     }
 }

@@ -33,7 +33,6 @@ use LibreNMS\Billing;
 use LibreNMS\Util\Color;
 use LibreNMS\Util\Html;
 use LibreNMS\Util\Number;
-use LibreNMS\Util\Url;
 
 /**
  * @extends TableController<Bill>
@@ -164,12 +163,12 @@ class BillsController extends TableController
         }
 
         $colors = Color::percentage($percent, null);
-        $bill_url = Url::generate(['page' => 'bill', 'bill_id' => $bill->bill_id]);
+        $bill_url = route('bill.show', $bill);
         $period = date('Y-m-d', strtotime((string) $from)) . ' to ' . date('Y-m-d', strtotime((string) $to));
 
         $actions = '';
         if (! $this->previous && Gate::allows('update', $bill)) {
-            $edit_url = Url::generate(['page' => 'bill', 'bill_id' => $bill->bill_id, 'view' => 'edit']);
+            $edit_url = route('bill.show', ['bill' => $bill, 'view' => 'edit']);
             $actions = "<a href='$edit_url'><i class='fa fa-pencil fa-lg icon-theme' title='" . __('Edit') . "' aria-hidden='true'></i> " . __('Edit') . '</a>';
         }
 

@@ -32,7 +32,6 @@ use App\Models\Port;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use LibreNMS\Tests\TestCase;
-use LibreNMS\Util\Url;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 
@@ -122,7 +121,7 @@ class BillsPageTest extends TestCase
         $all = $rows();
         $this->assertEquals(2, $all['total']);
         $this->assertStringContainsString('Over CDR', $all['rows'][0]['bill_name']);
-        $this->assertStringContainsString(Url::generate(['page' => 'bill', 'bill_id' => $over->bill_id]), $all['rows'][0]['bill_name']);
+        $this->assertStringContainsString(route('bill.show', $over), $all['rows'][0]['bill_name']);
         $this->assertEquals('CDR', $all['rows'][0]['bill_type']);
         $this->assertStringContainsString('1 kbps', $all['rows'][0]['overusage']);
         $this->assertEquals('-', $all['rows'][1]['overusage']);
@@ -206,7 +205,7 @@ class BillsPageTest extends TestCase
 
         $bill = Bill::where('bill_name', 'New quota bill')->first();
         $this->assertNotNull($bill);
-        $response->assertRedirect(Url::generate(['page' => 'bill', 'bill_id' => $bill->bill_id, 'view' => 'edit']));
+        $response->assertRedirect(route('bill.show', ['bill' => $bill, 'view' => 'edit']));
         $this->assertEquals(500000000, $bill->bill_quota);
         $this->assertEquals(0, $bill->bill_cdr);
         $this->assertEquals(15, $bill->bill_day);
