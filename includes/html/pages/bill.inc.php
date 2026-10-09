@@ -128,7 +128,7 @@ if (Gate::allows('view', $bill)) {
         $sep = ' | ';
     }
 
-    echo '<div style="font-weight: bold; float: right;"><a href="' . \LibreNMS\Util\Url::generate(['page' => 'bills']) . '/"><i class="fa fa-arrow-left fa-lg icon-theme" aria-hidden="true"></i> Back to Bills</a></div>';
+    echo '<div style="font-weight: bold; float: right;"><a href="' . route('bills.index') . '"><i class="fa fa-arrow-left fa-lg icon-theme" aria-hidden="true"></i> Back to Bills</a></div>';
 
     print_optionbar_end();
 

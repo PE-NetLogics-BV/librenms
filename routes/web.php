@@ -136,7 +136,8 @@ Route::middleware(['auth'])->group(function (): void {
     Route::resource('service', ServiceController::class)->only(['show', 'destroy']);
     Route::post('customoid/test/{customoid?}', [CustomoidController::class, 'test'])->name('customoid.test');
     Route::resource('customoid', CustomoidController::class)->only(['show', 'store', 'update', 'destroy']);
-    Route::resource('bill', BillController::class)->only(['update', 'destroy']);
+    Route::get('bills/{vars?}', [BillController::class, 'index'])->name('bills.index')->where('vars', '.*');
+    Route::resource('bill', BillController::class)->only(['store', 'update', 'destroy']);
     Route::post('bill/{bill}/reset', [BillController::class, 'reset'])->name('bill.reset');
     Route::post('bill/{bill}/ports', [BillController::class, 'attachPort'])->name('bill.port.attach');
     Route::delete('bill/{bill}/ports/{port}', [BillController::class, 'detachPort'])->name('bill.port.detach');
@@ -400,6 +401,7 @@ Route::middleware(['auth'])->group(function (): void {
             Route::post('alertlog', Table\AlertLogController::class)->name('table.alertlog');
             Route::get('alertlog/export', [Table\AlertLogController::class, 'export'])->name('table.alertlog.export');
             Route::post('alerts', Table\AlertsController::class)->name('table.alerts');
+            Route::post('bills', Table\BillsController::class)->name('table.bills');
             Route::post('alert-schedule', Table\AlertScheduleController::class);
             Route::post('access-points', Table\AccessPointController::class)->name('table.access-points');
             Route::post('customers', Table\CustomersController::class);
